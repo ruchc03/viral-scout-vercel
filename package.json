@@ -1,0 +1,10 @@
+{
+  "name": "viral-scout-vercel",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.7.7",
+    "google-trends-api": "^4.9.2"
+  }
+}
