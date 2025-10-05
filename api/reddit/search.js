@@ -8,12 +8,19 @@ export default async function handler(req, res) {
   try {
     const { subreddits, q = "", sort = "hot", limit = 25 } = req.query;
     if (!subreddits) return res.status(400).json({ error: "Missing subreddits" });
-    const subs = subreddits.split(",").map(s => s.trim()).filter(Boolean);
-    const results = [];
 
+    const subs = subreddits.split(",").map(s => s.trim()).filter(Boolean);
+    const headers = {
+      "User-Agent": "ViralScout/1.0 (by u/yourusername)",
+      "Accept": "application/json"
+    };
+
+    const results = [];
     for (const sub of subs) {
-      const url = `https://www.reddit.com/r/${sub}/${sort}.json?limit=${Math.min(Number(limit),100)}`;
-      const r = await axios.get(url, { headers: { "User-Agent": "ViralScout/1.0" } });
+      // Use api.reddit.com (more tolerant) + raw_json=1
+      const url = `https://api.reddit.com/r/${sub}/${sort}?limit=${Math.min(Number(limit), 100)}&raw_json=1`;
+      const r = await axios.get(url, { headers, timeout: 10000 });
+
       const posts = (r.data?.data?.children || []).map(c => ({
         title: c.data?.title || "",
         url: `https://reddit.com${c.data?.permalink || ""}`,
@@ -22,11 +29,17 @@ export default async function handler(req, res) {
         subreddit: c.data?.subreddit || sub,
         created_utc: c.data?.created_utc || 0
       }));
+
       results.push(...(q ? posts.filter(p => p.title.toLowerCase().includes(q.toLowerCase())) : posts));
     }
 
     res.json({ posts: results });
   } catch (e) {
-    res.status(500).json({ error: "Reddit upstream error", detail: e?.response?.data || e.message });
+    const status = e?.response?.status || 500;
+    res.status(500).json({
+      error: "Reddit upstream error",
+      status,
+      detail: e?.response?.data?.message || e.message
+    });
   }
 }
