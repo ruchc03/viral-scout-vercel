@@ -1,5 +1,5 @@
-// /api/trends/rising.js
-export const config = { runtime: 'nodejs18.x' }; // force Node runtime
+// Force Node runtime on Vercel
+export const config = { runtime: 'nodejs18.x' };
 
 export default async function handler(req, res) {
   if (req.headers['x-api-key'] !== process.env.PRIVATE_API_KEY) {
@@ -9,10 +9,11 @@ export default async function handler(req, res) {
   const keyword = String(req.query.keyword ?? '');
   if (!keyword) return res.status(400).json({ error: 'Missing `keyword`' });
 
-  // google-trends-api is CommonJS; require works in Node runtime
-  const trends = require('google-trends-api');
-
   try {
+    // google-trends-api is CJS; in ESM use dynamic import and grab .default if present
+    const mod = await import('google-trends-api');
+    const trends = mod.default ?? mod;
+
     const raw = await trends.relatedQueries({ keyword, hl: 'en-US', timezone: 0 });
     const data = JSON.parse(raw);
     const rising = data?.default?.rankedList?.[1]?.rankedKeyword ?? [];
