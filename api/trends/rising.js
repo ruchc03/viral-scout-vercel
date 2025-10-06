@@ -1,5 +1,4 @@
-// Force Node runtime on Vercel
-export const config = { runtime: 'nodejs18.x' };
+export const config = { runtime: 'nodejs' };
 
 export default async function handler(req, res) {
   if (req.headers['x-api-key'] !== process.env.PRIVATE_API_KEY) {
@@ -10,8 +9,7 @@ export default async function handler(req, res) {
   if (!keyword) return res.status(400).json({ error: 'Missing `keyword`' });
 
   try {
-    // google-trends-api is CJS; in ESM use dynamic import and grab .default if present
-    const mod = await import('google-trends-api');
+    const mod = await import('google-trends-api'); // CJS lib via dynamic import
     const trends = mod.default ?? mod;
 
     const raw = await trends.relatedQueries({ keyword, hl: 'en-US', timezone: 0 });
