@@ -1,42 +1,65 @@
-import axios from "axios";
-import { guard } from "../_lib/guard.js";
+// /api/reddit/search.js
+export const config = { runtime: 'nodejs18.x' };
 
-export default async function handler(req, res) {
-  if (!guard(req, res)) return;
-  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+async function fetchSub(sub, sort, limit) {
+  const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/${sort}.json?limit=${limit}&raw_json=1`;
+  const r = await fetch(url, {
+    headers: {
+      'user-agent': 'viral-scout-vercel/1.0 (by u/ruchc03)',
+      accept: 'application/json',
+    },
+    cache: 'no-store',
+  });
+
+  const text = await r.text();
+  if (!r.ok) throw new Error(`Reddit ${r.status}: ${text.slice(0, 200)}`);
 
   try {
-    const { subreddits, q = "", sort = "hot", limit = 25 } = req.query;
-    if (!subreddits) return res.status(400).json({ error: "Missing subreddits" });
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Non-JSON from Reddit: ${text.slice(0, 200)}`);
+  }
+}
 
-    const subs = subreddits.split(",").map(s => s.trim()).filter(Boolean);
-    const results = [];
+export default async function handler(req, res) {
+  if (req.headers['x-api-key'] !== process.env.PRIVATE_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
 
-    for (const sub of subs) {
-      // Use a mirror to avoid Reddit 403s from cloud/datacenter IPs.
-      // r.jina.ai returns the raw content of the requested URL.
-      const url = `https://r.jina.ai/http://www.reddit.com/r/${sub}/${sort}.json?limit=${Math.min(Number(limit),100)}&raw_json=1`;
-      const r = await axios.get(url, { timeout: 15000, responseType: "text" });
+  const subs = String(req.query.subreddits ?? 'all')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
 
-      // Mirror returns text; parse to JSON
-      const data = JSON.parse(r.data);
-      const posts = (data?.data?.children || []).map(c => ({
-        title: c.data?.title || "",
-        url: `https://reddit.com${c.data?.permalink || ""}`,
-        score: c.data?.score ?? 0,
-        num_comments: c.data?.num_comments ?? 0,
-        subreddit: c.data?.subreddit || sub,
-        created_utc: c.data?.created_utc ?? 0
+  const sort = String(req.query.sort ?? 'hot').toLowerCase(); // hot | top | new
+  const limit = Math.min(Number(req.query.limit ?? 10) || 10, 50);
+
+  try {
+    const results = await Promise.allSettled(subs.map(s => fetchSub(s, sort, limit)));
+
+    const items = results.flatMap((p, i) => {
+      const subreddit = subs[i];
+      if (p.status !== 'fulfilled') {
+        return [{ subreddit, error: true, detail: String(p.reason) }];
+      }
+      const children = p.value?.data?.children ?? [];
+      return children.map(c => ({
+        subreddit,
+        id: c?.data?.id,
+        title: c?.data?.title,
+        url: `https://www.reddit.com${c?.data?.permalink ?? ''}`,
+        score: c?.data?.score,
+        numComments: c?.data?.num_comments,
+        createdUtc: c?.data?.created_utc,
+        thumbnail: c?.data?.thumbnail,
+        isVideo: !!c?.data?.is_video,
       }));
-
-      results.push(...(q ? posts.filter(p => p.title.toLowerCase().includes(q.toLowerCase())) : posts));
-    }
-
-    res.json({ posts: results });
-  } catch (e) {
-    res.status(500).json({
-      error: "Reddit upstream error",
-      detail: e?.message || "unknown error"
     });
+
+    return res.status(200).json({ items });
+  } catch (err) {
+    return res
+      .status(502)
+      .json({ error: 'Reddit upstream error', detail: String(err?.message ?? err) });
   }
 }
