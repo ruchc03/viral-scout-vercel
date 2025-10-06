@@ -1,4 +1,4 @@
-export const config = { runtime: 'nodejs18.x' };
+export const config = { runtime: 'nodejs' };
 
 async function fetchSub(base, sub, sort, limit) {
   const url = `${base}/r/${encodeURIComponent(sub)}/${sort}.json?limit=${limit}&raw_json=1`;
@@ -6,22 +6,18 @@ async function fetchSub(base, sub, sort, limit) {
     headers: {
       'user-agent': 'viral-scout-vercel/1.0 (by u/ruchc03)',
       accept: 'application/json',
-      'accept-language': 'en-US,en;q=0.8'
+      'accept-language': 'en-US,en;q=0.8',
     },
     cache: 'no-store',
   });
   const text = await r.text();
-  if (!r.ok) throw new Error(`Reddit ${r.status}: ${text.slice(0,200)}`);
-  try { return JSON.parse(text); } catch { throw new Error(`Non-JSON: ${text.slice(0,200)}`); }
+  if (!r.ok) throw new Error(`Reddit ${r.status}: ${text.slice(0, 200)}`);
+  try { return JSON.parse(text); } catch { throw new Error(`Non-JSON: ${text.slice(0, 200)}`); }
 }
 
 async function getSubreddit(sub, sort, limit) {
-  try {
-    return await fetchSub('https://www.reddit.com', sub, sort, limit);
-  } catch (e1) {
-    // Fallback to old.reddit.com which is often less picky
-    return await fetchSub('https://old.reddit.com', sub, sort, limit);
-  }
+  try { return await fetchSub('https://www.reddit.com', sub, sort, limit); }
+  catch { return await fetchSub('https://old.reddit.com', sub, sort, limit); }
 }
 
 export default async function handler(req, res) {
@@ -29,12 +25,8 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const subs = String(req.query.subreddits ?? 'all')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  const sort = String(req.query.sort ?? 'hot').toLowerCase(); // hot|top|new
+  const subs = String(req.query.subreddits ?? 'all').split(',').map(s => s.trim()).filter(Boolean);
+  const sort = String(req.query.sort ?? 'hot').toLowerCase(); // hot | top | new
   const limit = Math.min(Number(req.query.limit ?? 10) || 10, 50);
 
   try {
