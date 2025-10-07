@@ -1,9 +1,29 @@
 // /api/reddit/search.js
 export const config = { runtime: 'nodejs' };
 
+// Use your real Reddit username here (Reddit requires a human UA string)
 const USER_AGENT = 'viral-scout-vercel/1.0 (by u/SavingsHorse1910)';
 
-// App-only OAuth: client_credentials grant
+// --- tiny, in-memory rate limiter (best-effort per-IP) ---
+function rateLimit(req, res) {
+  try {
+    const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0] || 'unknown';
+    const now = Date.now();
+    globalThis.__rate = globalThis.__rate || new Map();
+    const hits = (globalThis.__rate.get(ip) || []).filter((t) => now - t < 60_000);
+    hits.push(now);
+    globalThis.__rate.set(ip, hits);
+    if (hits.length > 60) {
+      res.status(429).json({ ok: false, error: 'Too many requests' });
+      return true;
+    }
+  } catch {
+    // ignore limiter failures
+  }
+  return false;
+}
+
+// --- OAuth token (client_credentials) ---
 async function getToken() {
   const id = process.env.REDDIT_CLIENT_ID || '';
   const secret = process.env.REDDIT_CLIENT_SECRET || '';
@@ -18,10 +38,7 @@ async function getToken() {
       'content-type': 'application/x-www-form-urlencoded',
       'user-agent': USER_AGENT,
     },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      scope: 'read',
-    }),
+    body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'read' }),
     cache: 'no-store',
   });
 
@@ -50,17 +67,23 @@ async function fetchSub(token, sub, sort, limit) {
 }
 
 export default async function handler(req, res) {
+  // Rate limit
+  if (rateLimit(req, res)) return;
+
+  // Auth
   if (req.headers['x-api-key'] !== process.env.PRIVATE_API_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
 
+  // Inputs
   const subs = String(req.query.subreddits ?? 'all')
     .split(',')
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 10); // cap to 10 subs per request
 
-  const sort = String(req.query.sort ?? 'hot').toLowerCase(); // hot | top | new
-  const limit = Math.min(Number(req.query.limit ?? 10) || 10, 50);
+  const sort = String(req.query.sort ?? 'hot').toLowerCase(); // hot|top|new
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 10) || 10, 1), 50); // 1..50
 
   try {
     const token = await getToken();
@@ -85,10 +108,13 @@ export default async function handler(req, res) {
       }));
     });
 
-    return res.status(200).json({ items });
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
+    return res.status(200).json({ ok: true, data: { items } });
   } catch (err) {
-    return res
-      .status(502)
-      .json({ error: 'Reddit upstream error', detail: String(err?.message ?? err) });
+    return res.status(502).json({
+      ok: false,
+      error: 'Reddit upstream error',
+      detail: String(err?.message ?? err),
+    });
   }
 }
